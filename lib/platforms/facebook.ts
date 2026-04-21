@@ -49,14 +49,15 @@ export class FacebookClient implements PlatformClient {
     return { accessToken: refreshToken };
   }
 
-  async publishPost(tokens: { accessToken: string }, content: string, media?: string[]): Promise<PublishResult> {
+  async publishPost(tokens: { accessToken: string }, content: string, media?: string[], accountId?: string): Promise<PublishResult> {
     try {
-      let url = `https://graph.facebook.com/v22.0/me/feed`;
+      const targetId = accountId || "me";
+      let url = `https://graph.facebook.com/v22.0/${targetId}/feed`;
       const params = new URLSearchParams();
       params.append("access_token", tokens.accessToken);
 
       if (media && media.length > 0) {
-        url = `https://graph.facebook.com/v22.0/me/photos`;
+        url = `https://graph.facebook.com/v22.0/${targetId}/photos`;
         params.append("url", media[0]);
         params.append("caption", content);
       } else {
@@ -77,12 +78,13 @@ export class FacebookClient implements PlatformClient {
     }
   }
 
-  async getComments(tokens: { accessToken: string }, pageId: string): Promise<any> {
+  async getComments(tokens: { accessToken: string }, accountId: string): Promise<any> {
     try {
-      console.log(`[AutoReply Debug] FacebookClient: Fetching posts for page ${pageId}...`);
+      console.log(`[AutoReply Debug] FacebookClient: Fetching posts for page ${accountId}...`);
       const postRes = await fetch(
-        `https://graph.facebook.com/v22.0/${pageId}/posts?fields=id,message,created_time&limit=10&access_token=${tokens.accessToken}`
+        `https://graph.facebook.com/v22.0/${accountId}/posts?fields=id,message,created_time&limit=10&access_token=${tokens.accessToken}`
       );
+      // ... rest is same
 
       const postData = await postRes.json();
       if (postData.error) throw new Error(postData.error.message);
@@ -126,7 +128,7 @@ export class FacebookClient implements PlatformClient {
     }
   }
 
-  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string): Promise<any> {
+  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any> {
     try {
       const res = await fetch(
         `https://graph.facebook.com/v22.0/${commentId}/comments`,

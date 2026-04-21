@@ -70,7 +70,8 @@ export async function executePublishing(postId: string) {
       const result = await client.publishPost(
         { accessToken },
         post.content,
-        post.mediaUrls?.split(",")
+        post.mediaUrls?.split(","),
+        account.accountId || undefined
       );
 
       if (result.success) {

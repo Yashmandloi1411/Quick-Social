@@ -61,12 +61,20 @@ export class LinkedInClient implements PlatformClient {
     };
   }
 
-  async publishPost(token: { accessToken: string }, content: string, mediaUrls?: string[]): Promise<PublishResult> {
+  async publishPost(tokens: { accessToken: string }, content: string, media?: string[], accountId?: string): Promise<PublishResult> {
     try {
       // LinkedIn UGC API logic here
-      return { success: true, postId: "li_post_placeholder" };
+      return { success: true, platformPostId: "li_post_placeholder" };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  }
+
+  async getComments(tokens: { accessToken: string }, accountId: string): Promise<any> {
+    return [];
+  }
+
+  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any> {
+    return { success: false, error: "Not implemented" };
   }
 }

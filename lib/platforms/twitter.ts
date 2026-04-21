@@ -71,7 +71,7 @@ export class TwitterClient implements PlatformClient {
     };
   }
 
-  async publishPost(tokens: { accessToken: string }, content: string): Promise<PublishResult> {
+  async publishPost(tokens: { accessToken: string }, content: string, media?: string[], accountId?: string): Promise<PublishResult> {
     console.log("X/Twitter: Attempting to publish tweet...");
     const response = await fetch("https://api.twitter.com/2/tweets", {
       method: "POST",
@@ -99,7 +99,7 @@ export class TwitterClient implements PlatformClient {
     return [];
   }
 
-  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string): Promise<any> {
+  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any> {
     const response = await fetch("https://api.twitter.com/2/tweets", {
       method: "POST",
       headers: {

@@ -14,13 +14,13 @@ export class InstagramClient implements PlatformClient {
       "pages_show_list",
       "public_profile"
     ];
-    return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${this.clientId}&redirect_uri=${encodeURIComponent(this.redirectUri)}&state=${state}&scope=${scopes.join(",")}`;
+    return `https://www.facebook.com/v22.0/dialog/oauth?client_id=${this.clientId}&redirect_uri=${encodeURIComponent(this.redirectUri)}&state=${state}&scope=${scopes.join(",")}`;
   }
 
   async exchangeCode(code: string): Promise<TokenResponse & AccountMetadata> {
     // 1. Exchange code for user access token
     const tokenRes = await fetch(
-      `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${this.clientId}&redirect_uri=${encodeURIComponent(this.redirectUri)}&client_secret=${this.clientSecret}&code=${code}`
+      `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${this.clientId}&redirect_uri=${encodeURIComponent(this.redirectUri)}&client_secret=${this.clientSecret}&code=${code}`
     );
     const tokenData = await tokenRes.json();
     if (tokenData.error) throw new Error(tokenData.error.message);
@@ -29,7 +29,7 @@ export class InstagramClient implements PlatformClient {
 
     // 2. Get user's pages and their linked IG accounts
     const pagesRes = await fetch(
-      `https://graph.facebook.com/v18.0/me/accounts?fields=instagram_business_account{id,username,profile_picture_url},name&access_token=${userAccessToken}`
+      `https://graph.facebook.com/v22.0/me/accounts?fields=instagram_business_account{id,username,profile_picture_url},name&access_token=${userAccessToken}`
     );
     const pagesData = await pagesRes.json();
     if (pagesData.error) throw new Error(pagesData.error.message);
@@ -53,7 +53,7 @@ export class InstagramClient implements PlatformClient {
   async refreshToken(refreshToken: string): Promise<TokenResponse> {
     // IG use long-lived user tokens.
     const res = await fetch(
-      `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${this.clientId}&client_secret=${this.clientSecret}&fb_exchange_token=${refreshToken}`
+      `https://graph.facebook.com/v22.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${this.clientId}&client_secret=${this.clientSecret}&fb_exchange_token=${refreshToken}`
     );
     const data = await res.json();
     return {
@@ -62,19 +62,27 @@ export class InstagramClient implements PlatformClient {
     };
   }
 
-  async publishPost(tokens: { accessToken: string }, content: string, media?: string[]): Promise<PublishResult> {
+  async publishPost(tokens: { accessToken: string }, content: string, media?: string[], accountId?: string): Promise<PublishResult> {
     try {
-      // Instagram requires a 2-step process: Create Container -> Publish Container
-      // This implementation assumes 'media' is available as IG requires an image/video.
-      // If no media, we can't post to IG feed.
       if (!media || media.length === 0) {
         return { success: false, error: "Instagram requires at least one image or video." };
       }
 
-      // 1. Create Media Container (assuming first media item for now)
+      const igId = accountId;
+      if (!igId) throw new Error("Instagram Business Account ID is required for publishing.");
+
+      // 1. Create Media Container
       const containerRes = await fetch(
-        `https://graph.facebook.com/v18.0/me/media?image_url=${encodeURIComponent(media[0])}&caption=${encodeURIComponent(content)}&access_token=${tokens.accessToken}`,
-        { method: "POST" }
+        `https://graph.facebook.com/v22.0/${igId}/media`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image_url: media[0],
+            caption: content,
+            access_token: tokens.accessToken,
+          }),
+        }
       );
       const containerData = await containerRes.json();
       if (containerData.error) throw new Error(containerData.error.message);
@@ -83,8 +91,15 @@ export class InstagramClient implements PlatformClient {
 
       // 2. Publish Media
       const publishRes = await fetch(
-        `https://graph.facebook.com/v18.0/me/media_publish?creation_id=${creationId}&access_token=${tokens.accessToken}`,
-        { method: "POST" }
+        `https://graph.facebook.com/v22.0/${igId}/media_publish`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            creation_id: creationId,
+            access_token: tokens.accessToken,
+          }),
+        }
       );
       const publishData = await publishRes.json();
       if (publishData.error) throw new Error(publishData.error.message);
@@ -96,11 +111,10 @@ export class InstagramClient implements PlatformClient {
     }
   }
 
-  async getComments(tokens: { accessToken: string }, postId: string): Promise<any> {
+  async getComments(tokens: { accessToken: string }, accountId: string): Promise<any> {
     try {
-      // Fetch media first, then their comments
       const mediaRes = await fetch(
-        `https://graph.facebook.com/v18.0/me/media?fields=comments{id,text,username,timestamp}&access_token=${tokens.accessToken}`
+        `https://graph.facebook.com/v22.0/${accountId}/media?fields=comments{id,text,username,from,timestamp}&access_token=${tokens.accessToken}`
       );
       const mediaData = await mediaRes.json();
       
@@ -113,6 +127,7 @@ export class InstagramClient implements PlatformClient {
                 id: comment.id,
                 text: comment.text,
                 username: comment.username,
+                fromId: comment.from?.id || "",
                 createdAt: comment.timestamp,
               });
             });
@@ -126,10 +141,17 @@ export class InstagramClient implements PlatformClient {
     }
   }
 
-  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string): Promise<any> {
+  async replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any> {
     const response = await fetch(
-      `https://graph.facebook.com/v18.0/${commentId}/replies?message=${encodeURIComponent(text)}&access_token=${tokens.accessToken}`,
-      { method: "POST" }
+      `https://graph.facebook.com/v22.0/${commentId}/replies`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          access_token: tokens.accessToken,
+        }),
+      }
     );
     return await response.json();
   }
