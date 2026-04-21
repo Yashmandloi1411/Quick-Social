@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing comment" }, { status: 400 });
     }
 
+    // const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
     const systemPrompt = `You are a social media manager writing replies to comments.

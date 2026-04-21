@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
     console.log("AI Caption request body:", body);
     const { prompt, platforms = ["social media"] } = body;
 
+    // const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
     const platformList = platforms.length > 0 ? platforms.join(", ") : "general social media";

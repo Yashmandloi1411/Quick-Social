@@ -2,6 +2,7 @@ import { PlatformClient } from "./types";
 import { TwitterClient } from "./twitter";
 import { InstagramClient } from "./instagram";
 import { LinkedInClient } from "./linkedin";
+import { facebookClient } from "./facebook";
 import { PlaceholderClient } from "./placeholder";
 
 export function getPlatformClient(platform: string): PlatformClient {
@@ -14,7 +15,7 @@ export function getPlatformClient(platform: string): PlatformClient {
     case "linkedin":
       return new LinkedInClient();
     case "facebook":
-      return new PlaceholderClient("Facebook");
+      return facebookClient;
     case "youtube":
       return new PlaceholderClient("YouTube");
     case "tiktok":

@@ -45,12 +45,14 @@ export async function POST(req: NextRequest) {
       where: eq(autoReplyRules.userId, user.id),
     });
 
+    /* 
     if (user.plan === "free" && existingRules.length >= 1) {
       return NextResponse.json(
         { error: "Free plan is limited to 1 auto-reply rule. Upgrade to Pro for more." },
         { status: 403 }
       );
     }
+    */
 
     const body = await req.json();
     const { accountId, triggerType, triggerKeywords, useAi, aiPrompt, replyTemplate } = body;

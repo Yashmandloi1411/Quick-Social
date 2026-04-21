@@ -1,29 +1,25 @@
 import { inngest } from "./client";
 import { db } from "@/lib/db";
 import { connectedAccounts, posts, autoReplyRules, autoReplyLogs } from "@/lib/db/schema";
-import { lt, eq } from "drizzle-orm";
+import { lt, eq, and } from "drizzle-orm";
 import { getPlatformClient } from "@/lib/platforms/factory";
 import { executePublishing } from "@/lib/platforms/publisher";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+console.log("🚀 Inngest Functions Module Loaded");
+
 // ─── Publish Post (Event-triggered) ──────────────────────────────────────────
 
 export const publishPost = inngest.createFunction(
-  { id: "publish-post", event: "post/publish" },
+  { 
+    id: "publish-post",
+    triggers: [{ event: "post/publish" }]
+  },
   async ({ event, step }) => {
     const { postId } = event.data;
-    console.log("Inngest: Triggered publish-post for postId:", postId);
-
     await step.run("execute-publish", async () => {
       const post = await db.query.posts.findFirst({ where: eq(posts.id, postId) });
-      if (!post) {
-        console.log("Inngest: Post not found, skipping.", postId);
-        return { skipped: true };
-      }
-      if (post.status !== "scheduled" && post.status !== "published") {
-        console.log("Inngest: Post status is not scheduled, skipping.", post.status);
-        return { skipped: true };
-      }
+      if (!post || (post.status !== "scheduled" && post.status !== "published")) return { skipped: true };
       return await executePublishing(postId);
     });
   }
@@ -32,9 +28,11 @@ export const publishPost = inngest.createFunction(
 // ─── Refresh Tokens (Cron every 6h) ──────────────────────────────────────────
 
 export const refreshToken = inngest.createFunction(
-  { id: "refresh-tokens", cron: "0 */6 * * *" },
+  { 
+    id: "refresh-tokens",
+    triggers: [{ cron: "0 */6 * * *" }]
+  },
   async ({ step }) => {
-    console.log("Inngest: Refreshing tokens...");
     const expiringAccounts = await step.run("fetch-expiring-accounts", async () => {
       return await db.query.connectedAccounts.findMany({
         where: lt(connectedAccounts.expiresAt, new Date(Date.now() + 60 * 60 * 1000)),
@@ -47,81 +45,72 @@ export const refreshToken = inngest.createFunction(
         try {
           const client = getPlatformClient(account.platform);
           const newTokens = await client.refreshToken(account.refreshToken!);
-          await db
-            .update(connectedAccounts)
-            .set({
-              accessToken: newTokens.accessToken,
-              refreshToken: newTokens.refreshToken || account.refreshToken,
-              expiresAt: newTokens.expiresAt,
-              status: "connected",
-            })
-            .where(eq(connectedAccounts.id, account.id));
+          await db.update(connectedAccounts).set({
+            accessToken: newTokens.accessToken,
+            refreshToken: newTokens.refreshToken || account.refreshToken,
+            expiresAt: newTokens.expiresAt,
+            status: "connected",
+          }).where(eq(connectedAccounts.id, account.id));
         } catch {
-          await db
-            .update(connectedAccounts)
-            .set({ status: "expired" })
-            .where(eq(connectedAccounts.id, account.id));
+          await db.update(connectedAccounts).set({ status: "expired" }).where(eq(connectedAccounts.id, account.id));
         }
       });
     }
   }
 );
 
-// ─── Monitor Comments (Cron every 5 min) ─────────────────────────────────────
+// ─── Monitor Comments (Cron every 1 min) ─────────────────────────────────────
 
 export const monitorComments = inngest.createFunction(
-  { id: "monitor-comments", cron: "*/5 * * * *" },
+  { 
+    id: "monitor-comments",
+    triggers: [{ cron: "* * * * *" }]
+  },
   async ({ step }) => {
-    console.log("Inngest: monitorComments triggered");
-
-    const activeRules = await step.run("fetch-active-rules", async () => {
+    const activeRules = await step.run("fetch-rules", async () => {
       return await db.query.autoReplyRules.findMany({
         where: eq(autoReplyRules.isActive, true),
         with: { account: true },
       });
     });
 
+    console.log(`[Monitor] Found ${activeRules.length} active rules.`);
+
     for (const rule of activeRules) {
       await step.run(`check-rule-${rule.id}`, async () => {
         const account = rule.account;
-        if (!account?.accessToken) return;
+        if (!account) return;
 
-        let comments: any[] = [];
-        try {
-          const client = getPlatformClient(account.platform);
-          comments = await client.getComments({ accessToken: account.accessToken }, "");
-        } catch (e) {
-          console.log(`monitorComments: Failed to fetch comments for rule ${rule.id}:`, e);
-          return;
-        }
-
+        console.log(`[Monitor] Checking rule ${rule.id} for platform ${account.platform}`);
+        const client = getPlatformClient(account.platform);
+        const comments = await client.getComments({ accessToken: account.accessToken }, account.accountId);
+        
         const existingLogs = await db.query.autoReplyLogs.findMany({
           where: eq(autoReplyLogs.ruleId, rule.id),
         });
         const repliedIds = new Set(existingLogs.map((l) => l.targetCommentId));
 
         for (const comment of comments) {
-          if (!comment.id || repliedIds.has(comment.id)) continue;
+          if (!comment.id || repliedIds.has(comment.id) || comment.fromId === account.accountId) continue;
 
-          const text = (comment.text || comment.content || "").toLowerCase();
-          let matches = false;
+          const text = (comment.text || "").toLowerCase();
+          let match = false;
           if (rule.triggerType === "any") {
-            matches = true;
+            match = true;
           } else if (rule.triggerType === "keyword" && rule.triggerKeywords) {
-            const keywords = rule.triggerKeywords
-              .split(",")
-              .map((k: string) => k.trim().toLowerCase());
-            matches = keywords.some((kw: string) => text.includes(kw));
+            const keys = rule.triggerKeywords.split(",").map((k) => k.trim().toLowerCase());
+            match = keys.some((k) => text.includes(k));
           }
 
-          if (matches) {
+          if (match) {
+            console.log(`🚀 [Monitor] Match! Sending auto-reply.execute for comment ${comment.id}`);
             await inngest.send({
-              name: "auto-reply/send",
+              name: "auto-reply.execute",
               data: {
                 ruleId: rule.id,
                 commentId: comment.id,
-                commentText: comment.text || comment.content || "",
-                username: comment.username || comment.authorName || "user",
+                commentText: comment.text,
+                username: comment.username || "user",
                 platform: account.platform,
                 accountId: account.id,
               },
@@ -136,11 +125,17 @@ export const monitorComments = inngest.createFunction(
 // ─── Send Auto-Reply (Event-triggered) ───────────────────────────────────────
 
 export const sendAutoReply = inngest.createFunction(
-  { id: "send-auto-reply", event: "auto-reply/send" },
+  { 
+    id: "auto-reply-processor",
+    triggers: [{ event: "auto-reply.execute" }]
+  },
   async ({ event, step }) => {
     const { ruleId, commentId, commentText, username, platform, accountId } = event.data;
+    console.log(`[Processor] Handling event for comment ${commentId}`);
 
     const replyText = await step.run("generate-reply", async () => {
+      if (!ruleId || ruleId === "undefined") return null;
+
       const rule = await db.query.autoReplyRules.findFirst({
         where: eq(autoReplyRules.id, ruleId),
       });
@@ -149,13 +144,14 @@ export const sendAutoReply = inngest.createFunction(
       if (rule.useAi && rule.aiPrompt) {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
         const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-        const prompt = `${rule.aiPrompt}\n\nComment from @${username}: "${commentText}"\n\nWrite a reply:`;
-        const result = await model.generateContent(prompt);
+        const result = await model.generateContent(
+          `${rule.aiPrompt}\n\nComment from ${username}: ${commentText}\n\nReply shortly and naturally.`
+        );
         return result.response.text().trim();
-      } else if (rule.replyTemplate) {
-        return rule.replyTemplate
-          .replace(/\{username\}/g, username)
-          .replace(/\{comment\}/g, commentText);
+      }
+
+      if (rule.replyTemplate) {
+        return rule.replyTemplate.replace(/\{username\}/g, username).replace(/\{comment\}/g, commentText);
       }
       return null;
     });
@@ -168,13 +164,9 @@ export const sendAutoReply = inngest.createFunction(
       });
       if (!account) return;
 
-      try {
-        const client = getPlatformClient(platform);
-        await client.replyToComment({ accessToken: account.accessToken }, commentId, replyText);
-      } catch (e) {
-        console.error("sendAutoReply: Failed to post reply:", e);
-      }
-
+      const client = getPlatformClient(platform);
+      await client.replyToComment({ accessToken: account.accessToken }, commentId, replyText);
+      
       await db.insert(autoReplyLogs).values({
         ruleId,
         targetCommentId: commentId,
@@ -182,6 +174,7 @@ export const sendAutoReply = inngest.createFunction(
         replyText,
         platform,
       });
+      console.log(`✅ [Processor] Reply sent to ${platform} and logged.`);
     });
   }
 );
