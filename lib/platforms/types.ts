@@ -24,4 +24,6 @@ export interface PlatformClient {
   publishPost(tokens: { accessToken: string }, content: string, media?: string[], accountId?: string): Promise<PublishResult>;
   getComments(tokens: { accessToken: string }, accountId: string): Promise<any>;
   replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any>;
+  getAllPosts?(tokens: { accessToken: string }, accountId: string): Promise<any[]>;
+  getPostMetrics?(tokens: { accessToken: string }, postId: string): Promise<any>;
 }

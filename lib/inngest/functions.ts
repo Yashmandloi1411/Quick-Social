@@ -1,7 +1,7 @@
 import { inngest } from "./client";
 import { db } from "@/lib/db";
-import { connectedAccounts, posts, autoReplyRules, autoReplyLogs } from "@/lib/db/schema";
-import { lt, eq, and } from "drizzle-orm";
+import { connectedAccounts, posts, autoReplyRules, autoReplyLogs, platformPosts, postAnalytics, postComments } from "@/lib/db/schema";
+import { lt, eq, and, sql } from "drizzle-orm";
 import { getPlatformClient } from "@/lib/platforms/factory";
 import { executePublishing } from "@/lib/platforms/publisher";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -176,5 +176,111 @@ export const sendAutoReply = inngest.createFunction(
       });
       console.log(`✅ [Processor] Reply sent to ${platform} and logged.`);
     });
+  }
+);
+
+// ─── Sync Analytics (Cron every 1h + Manual) ───────────────────────────────────
+
+export const syncAnalytics = inngest.createFunction(
+  { 
+    id: "sync-analytics",
+    triggers: [
+      { cron: "0 * * * *" },
+      { event: "analytics/sync" }
+    ]
+  },
+  async ({ event, step }) => {
+    const accountsToSync = await step.run("fetch-accounts", async () => {
+      if (event.data?.accountId) {
+        return await db.query.connectedAccounts.findMany({
+          where: eq(connectedAccounts.id, event.data.accountId),
+        });
+      }
+      return await db.query.connectedAccounts.findMany({
+        where: eq(connectedAccounts.status, "connected"),
+      });
+    });
+
+    for (const account of accountsToSync) {
+      await step.run(`sync-account-${account.id}`, async () => {
+        const client = getPlatformClient(account.platform);
+        if (!client.getAllPosts) return;
+
+        const postsData = await client.getAllPosts({ accessToken: account.accessToken }, account.accountId!);
+        
+        for (const post of postsData) {
+          // 1. Upsert Post
+          await db.insert(platformPosts).values({
+            accountId: account.id,
+            platformPostId: post.id,
+            platform: account.platform,
+            content: post.message || post.caption || "",
+            mediaUrl: post.full_picture || post.media_url || post.thumbnail_url || null,
+            mediaType: post.media_type || "IMAGE",
+            permalink: post.permalink_url || post.permalink || null,
+            publishedAt: post.created_time || post.timestamp ? new Date(post.created_time || post.timestamp) : null,
+          }).onConflictDoUpdate({
+            target: platformPosts.platformPostId,
+            set: {
+              content: post.message || post.caption || "",
+              mediaUrl: post.full_picture || post.media_url || post.thumbnail_url || null,
+              permalink: post.permalink_url || post.permalink || null,
+            }
+          });
+
+          // 2. Fetch & Upsert Metrics
+          let metrics = { reach: 0, impressions: 0 };
+          if (client.getPostMetrics) {
+            metrics = await client.getPostMetrics({ accessToken: account.accessToken }, post.id);
+          }
+
+          const likes = post.like_count !== undefined ? post.like_count.toString() : (post.likes?.summary?.total_count?.toString() || "0");
+          const comments = post.comments_count !== undefined ? post.comments_count.toString() : (post.comments?.data?.length?.toString() || "0");
+          const shares = post.shares?.count?.toString() || "0";
+
+          await db.insert(postAnalytics).values({
+            platformPostId: post.id,
+            likesCount: likes,
+            commentsCount: comments,
+            sharesCount: shares,
+            reach: metrics.reach.toString(),
+            impressions: metrics.impressions.toString(),
+            syncedAt: new Date(),
+          }).onConflictDoUpdate({
+            target: postAnalytics.platformPostId,
+            set: {
+              likesCount: likes,
+              commentsCount: comments,
+              sharesCount: shares,
+              reach: metrics.reach.toString(),
+              impressions: metrics.impressions.toString(),
+              syncedAt: new Date(),
+            }
+          });
+
+          // 3. Upsert Comments
+          const platformComments = post.comments?.data || [];
+          for (const comm of platformComments) {
+            await db.insert(postComments).values({
+              platformPostId: post.id,
+              platformCommentId: comm.id,
+              authorName: comm.from?.name || comm.username || "User",
+              authorId: comm.from?.id || "",
+              text: comm.message || comm.text || "",
+              commentedAt: comm.created_time || comm.timestamp ? new Date(comm.created_time || comm.timestamp) : null,
+              syncedAt: new Date(),
+            }).onConflictDoUpdate({
+              target: postComments.platformCommentId,
+              set: {
+                text: comm.message || comm.text || "",
+                syncedAt: new Date(),
+              }
+            });
+          }
+        }
+      });
+    }
+
+    return { synced: accountsToSync.length };
   }
 );

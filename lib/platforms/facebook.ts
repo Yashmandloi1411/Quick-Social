@@ -153,6 +153,48 @@ export class FacebookClient implements PlatformClient {
       throw error;
     }
   }
+
+  async getAllPosts(tokens: { accessToken: string }, pageId: string): Promise<any[]> {
+    try {
+      const fields = [
+        "id", "message", "created_time", "full_picture", "permalink_url",
+        "likes.summary(true)", "comments{id,message,from,created_time}",
+        "shares", "reactions.summary(true)"
+      ].join(",");
+
+      const res = await fetch(
+        `https://graph.facebook.com/v22.0/${pageId}/posts?fields=${fields}&limit=50&access_token=${tokens.accessToken}`
+      );
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      return data.data || [];
+    } catch (error) {
+      console.error("[Analytics] Facebook getAllPosts error:", error);
+      return [];
+    }
+  }
+
+  async getPostMetrics(tokens: { accessToken: string }, postId: string): Promise<{ reach: number; impressions: number }> {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v22.0/${postId}/insights?metric=post_impressions,post_reach&access_token=${tokens.accessToken}`
+      );
+      const data = await res.json();
+      if (data.error) return { reach: 0, impressions: 0 };
+
+      const metrics: Record<string, number> = {};
+      (data.data || []).forEach((m: any) => {
+        metrics[m.name] = m.values?.[0]?.value || 0;
+      });
+
+      return {
+        reach: metrics["post_reach"] || 0,
+        impressions: metrics["post_impressions"] || 0,
+      };
+    } catch {
+      return { reach: 0, impressions: 0 };
+    }
+  }
 }
 
 export const facebookClient = new FacebookClient();

@@ -155,4 +155,40 @@ export class InstagramClient implements PlatformClient {
     );
     return await response.json();
   }
+
+  async getAllPosts(tokens: { accessToken: string }, accountId: string): Promise<any[]> {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v22.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=50&access_token=${tokens.accessToken}`
+      );
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      return data.data || [];
+    } catch (error) {
+      console.error("[Analytics] Instagram getAllPosts error:", error);
+      return [];
+    }
+  }
+
+  async getPostMetrics(tokens: { accessToken: string }, postId: string): Promise<any> {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v22.0/${postId}/insights?metric=impressions,reach,engagement&access_token=${tokens.accessToken}`
+      );
+      const data = await res.json();
+      if (data.error) return { reach: 0, impressions: 0 };
+
+      const metrics: Record<string, number> = {};
+      (data.data || []).forEach((m: any) => {
+        metrics[m.name] = m.values?.[0]?.value || 0;
+      });
+
+      return {
+        reach: metrics["reach"] || 0,
+        impressions: metrics["impressions"] || 0,
+      };
+    } catch {
+      return { reach: 0, impressions: 0 };
+    }
+  }
 }

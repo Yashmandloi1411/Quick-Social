@@ -125,4 +125,54 @@ export const autoReplyLogsRelations = relations(autoReplyLogs, ({ one }) => ({
   rule: one(autoReplyRules, { fields: [autoReplyLogs.ruleId], references: [autoReplyRules.id] }),
 }));
 
+// ─── Analytics Tables ─────────────────────────────────────────────────────────
 
+export const platformPosts = pgTable("platform_posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").references(() => connectedAccounts.id).notNull(),
+  platformPostId: text("platform_post_id").notNull().unique(),
+  platform: text("platform").notNull(),        // "facebook" | "instagram"
+  content: text("content"),                    // caption / message
+  mediaUrl: text("media_url"),                 // thumbnail image
+  mediaType: text("media_type"),               // "IMAGE" | "VIDEO" | "TEXT"
+  permalink: text("permalink"),                // direct link to post on platform
+  publishedAt: timestamp("published_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const postAnalytics = pgTable("post_analytics", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  platformPostId: text("platform_post_id").notNull().unique(),
+  likesCount: text("likes_count").default("0"),
+  commentsCount: text("comments_count").default("0"),
+  sharesCount: text("shares_count").default("0"),
+  reach: text("reach").default("0"),
+  impressions: text("impressions").default("0"),
+  reactionsJson: text("reactions_json"),   // JSON string: { LIKE: 5, LOVE: 2, ... }
+  syncedAt: timestamp("synced_at").defaultNow().notNull(),
+});
+
+export const postComments = pgTable("post_comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  platformPostId: text("platform_post_id").notNull(),
+  platformCommentId: text("platform_comment_id").notNull().unique(),
+  authorName: text("author_name"),
+  authorId: text("author_id"),
+  text: text("text"),
+  commentedAt: timestamp("commented_at"),
+  syncedAt: timestamp("synced_at").defaultNow().notNull(),
+});
+
+export const platformPostsRelations = relations(platformPosts, ({ one, many }) => ({
+  account: one(connectedAccounts, { fields: [platformPosts.accountId], references: [connectedAccounts.id] }),
+  analytics: many(postAnalytics),
+  comments: many(postComments),
+}));
+
+export const postAnalyticsRelations = relations(postAnalytics, ({ one }) => ({
+  post: one(platformPosts, { fields: [postAnalytics.platformPostId], references: [platformPosts.platformPostId] }),
+}));
+
+export const postCommentsRelations = relations(postComments, ({ one }) => ({
+  post: one(platformPosts, { fields: [postComments.platformPostId], references: [platformPosts.platformPostId] }),
+}));
