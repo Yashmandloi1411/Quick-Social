@@ -1,7 +1,6 @@
-import { db } from "@/lib/db";
-import { connectedAccounts, users } from "@/lib/db/schema";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, ConnectedAccount } from "@/lib/db/models";
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +19,7 @@ import {
 } from "hugeicons-react";
 import Link from "next/link";
 import { DisconnectButton } from "./account-card-client";
+import { v4 as uuidv4 } from "uuid";
 
 const PLATFORMS = [
   { id: "twitter", name: "Twitter / X", icon: TwitterIcon, color: "bg-black text-white" },
@@ -37,21 +37,26 @@ export default async function AccountsPage() {
   const { userId: clerkId } = await auth();
   if (!clerkId) return null;
 
-  let user = await db.query.users.findFirst({
-    where: eq(users.clerkId, clerkId),
-  });
+  await connectMongo();
+
+  let user = await (User as any).findOne({ clerkId });
 
   if (!user) {
-    const [newUser] = await db.insert(users).values({
+    user = await (User as any).create({
+      _id: uuidv4(),
       clerkId: clerkId,
       email: "user@example.com",
-    }).returning();
-    user = newUser;
+    });
   }
 
-  const accounts = await db.query.connectedAccounts.findMany({
-    where: eq(connectedAccounts.userId, user.id),
-  });
+  const accounts = await (ConnectedAccount as any).find({
+    userId: user._id,
+  }).lean();
+
+  const formattedAccounts = accounts.map((a: any) => ({
+    ...a,
+    id: a._id
+  }));
 
   return (
     <div className="space-y-6">
@@ -62,7 +67,7 @@ export default async function AccountsPage() {
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {PLATFORMS.map((platform) => {
-          const connectedAccount = accounts.find(a => a.platform.toLowerCase() === platform.id);
+          const connectedAccount = formattedAccounts.find(a => a.platform.toLowerCase() === platform.id);
           const Icon = platform.icon;
 
           return (

@@ -159,7 +159,7 @@ export class InstagramClient implements PlatformClient {
   async getAllPosts(tokens: { accessToken: string }, accountId: string): Promise<any[]> {
     try {
       const res = await fetch(
-        `https://graph.facebook.com/v22.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=50&access_token=${tokens.accessToken}`
+        `https://graph.facebook.com/v22.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=100&access_token=${tokens.accessToken}`
       );
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
@@ -170,14 +170,43 @@ export class InstagramClient implements PlatformClient {
     }
   }
 
-  async getPostMetrics(tokens: { accessToken: string }, postId: string): Promise<any> {
+  async getPostMetrics(tokens: { accessToken: string }, postId: string, mediaType?: string): Promise<any> {
     try {
-      const res = await fetch(
-        `https://graph.facebook.com/v22.0/${postId}/insights?metric=impressions,reach,engagement&access_token=${tokens.accessToken}`
+      let metricsList = "";
+      
+      if (mediaType === "VIDEO" || mediaType === "REELS") {
+        metricsList = "reach,saved,shares,video_views";
+      } else if (mediaType === "CAROUSEL_ALBUM") {
+        metricsList = "reach,saved,shares";
+      } else {
+        // IMAGE
+        metricsList = "reach,saved,shares";
+      }
+      
+      let res = await fetch(
+        `https://graph.facebook.com/v22.0/${postId}/insights?metric=${metricsList}&access_token=${tokens.accessToken}`
       );
-      const data = await res.json();
-      if (data.error) return { reach: 0, impressions: 0 };
+      let data = await res.json();
+      
+      // Fallback for standard videos if video_views metric fails
+      if (data.error && (mediaType === "VIDEO" || mediaType === "REELS")) {
+        metricsList = "reach,saved,shares";
+        res = await fetch(`https://graph.facebook.com/v22.0/${postId}/insights?metric=${metricsList}&access_token=${tokens.accessToken}`);
+        data = await res.json();
+      }
 
+      // Final safe fallback for any type
+      if (data.error) {
+        metricsList = "reach,saved";
+        res = await fetch(`https://graph.facebook.com/v22.0/${postId}/insights?metric=${metricsList}&access_token=${tokens.accessToken}`);
+        data = await res.json();
+      }
+
+      if (data.error) {
+        console.error("Instagram Insights Error:", data.error.message);
+        return { reach: 0, impressions: 0, saves: 0, videoViews: 0, shares: 0 };
+      }
+      
       const metrics: Record<string, number> = {};
       (data.data || []).forEach((m: any) => {
         metrics[m.name] = m.values?.[0]?.value || 0;
@@ -185,10 +214,13 @@ export class InstagramClient implements PlatformClient {
 
       return {
         reach: metrics["reach"] || 0,
-        impressions: metrics["impressions"] || 0,
+        impressions: metrics["impressions"] || metrics["plays"] || 0,
+        saves: metrics["saved"] || 0,
+        videoViews: metrics["video_views"] || metrics["plays"] || 0,
+        shares: metrics["shares"] || 0,
       };
     } catch {
-      return { reach: 0, impressions: 0 };
+      return { reach: 0, impressions: 0, saves: 0, videoViews: 0, shares: 0 };
     }
   }
 }

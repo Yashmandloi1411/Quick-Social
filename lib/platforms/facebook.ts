@@ -163,7 +163,7 @@ export class FacebookClient implements PlatformClient {
       ].join(",");
 
       const res = await fetch(
-        `https://graph.facebook.com/v22.0/${pageId}/posts?fields=${fields}&limit=50&access_token=${tokens.accessToken}`
+        `https://graph.facebook.com/v22.0/${pageId}/posts?fields=${fields}&limit=100&access_token=${tokens.accessToken}`
       );
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
@@ -174,13 +174,20 @@ export class FacebookClient implements PlatformClient {
     }
   }
 
-  async getPostMetrics(tokens: { accessToken: string }, postId: string): Promise<{ reach: number; impressions: number }> {
+  async getPostMetrics(tokens: { accessToken: string }, postId: string, mediaType?: string): Promise<any> {
     try {
+      const metricsList = [
+        "post_impressions",
+        "post_impressions_unique",
+        "post_clicks",
+        "post_negative_feedback"
+      ].join(",");
+
       const res = await fetch(
-        `https://graph.facebook.com/v22.0/${postId}/insights?metric=post_impressions,post_reach&access_token=${tokens.accessToken}`
+        `https://graph.facebook.com/v22.0/${postId}/insights?metric=${metricsList}&access_token=${tokens.accessToken}`
       );
       const data = await res.json();
-      if (data.error) return { reach: 0, impressions: 0 };
+      if (data.error) return { reach: 0, impressions: 0, clicks: 0, negativeActions: 0 };
 
       const metrics: Record<string, number> = {};
       (data.data || []).forEach((m: any) => {
@@ -188,11 +195,13 @@ export class FacebookClient implements PlatformClient {
       });
 
       return {
-        reach: metrics["post_reach"] || 0,
+        reach: metrics["post_impressions_unique"] || 0,
         impressions: metrics["post_impressions"] || 0,
+        clicks: metrics["post_clicks"] || 0,
+        negativeActions: metrics["post_negative_feedback"] || 0,
       };
     } catch {
-      return { reach: 0, impressions: 0 };
+      return { reach: 0, impressions: 0, clicks: 0, negativeActions: 0 };
     }
   }
 }

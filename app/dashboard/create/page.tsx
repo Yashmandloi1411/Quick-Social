@@ -1,22 +1,27 @@
-import { db } from "@/lib/db";
-import { connectedAccounts, users } from "@/lib/db/schema";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, ConnectedAccount } from "@/lib/db/models";
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
 import { ComposerClient } from "./composer-client";
 
 export default async function CreatePostPage() {
   const { userId: clerkId } = await auth();
   if (!clerkId) return null;
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.clerkId, clerkId),
-  });
+  await connectMongo();
+
+  const user = await (User as any).findOne({ clerkId });
 
   if (!user) return null;
 
-  const accounts = await db.query.connectedAccounts.findMany({
-    where: eq(connectedAccounts.userId, user.id),
-  });
+  const accounts = await (ConnectedAccount as any).find({
+    userId: user._id,
+  }).lean();
+
+  // Format accounts for compatibility
+  const formattedAccounts = accounts.map((a: any) => ({
+    ...a,
+    id: a._id
+  }));
 
   return (
     <div className="h-full">
@@ -24,7 +29,7 @@ export default async function CreatePostPage() {
         <h2 className="text-3xl font-bold tracking-tight">Create Post</h2>
         <p className="text-zinc-500">Draft, schedule, and publish your content across platforms.</p>
       </div>
-      <ComposerClient initialAccounts={accounts} />
+      <ComposerClient initialAccounts={formattedAccounts} />
     </div>
   );
 }

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { postComments, users } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, PostComment } from "@/lib/db/models";
 
 export async function GET(
   req: NextRequest,
@@ -12,17 +11,23 @@ export async function GET(
     const { userId: clerkId } = await auth();
     if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-    const user = await db.query.users.findFirst({ where: eq(users.clerkId, clerkId) });
+    await connectMongo();
+
+    const user = await User.findOne({ clerkId });
     if (!user) return new NextResponse("User not found", { status: 404 });
 
     const { id: platformPostId } = await params;
 
-    const comments = await db.query.postComments.findMany({
-      where: eq(postComments.platformPostId, platformPostId),
-      orderBy: [desc(postComments.commentedAt)],
-    });
+    const comments = await PostComment.find({ platformPostId })
+      .sort({ commentedAt: -1 })
+      .lean();
 
-    return NextResponse.json(comments);
+    const formattedComments = comments.map((c: any) => ({
+      ...c,
+      id: c._id
+    }));
+
+    return NextResponse.json(formattedComments);
   } catch (error: any) {
     console.error("GET /api/analytics/comments error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

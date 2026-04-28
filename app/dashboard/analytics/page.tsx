@@ -16,7 +16,12 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  Users
+  Users,
+  Bookmark,
+  MousePointer2,
+  AlertCircle,
+  Play,
+  Zap
 } from "lucide-react";
 import { toast } from "sonner";
 import Image from "next/image";
@@ -26,7 +31,11 @@ interface AnalyticsSummary {
   totalLikes: number;
   totalComments: number;
   totalShares: number;
+  totalSaves: number;
+  totalClicks: number;
   totalReach: number;
+  avgEngagementRate: number;
+  avgEngagementScore: number;
 }
 
 interface PlatformPost {
@@ -39,6 +48,7 @@ interface PlatformPost {
   mediaType: string;
   permalink: string | null;
   publishedAt: string;
+  isQuickSocialOrigin: boolean;
   analytics: any[];
 }
 
@@ -208,12 +218,18 @@ export default function AnalyticsPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard title="Total Posts" value={summary?.totalPosts || 0} icon={<TrendingUp className="text-indigo-600" />} />
         <KPICard title="Total Likes" value={summary?.totalLikes || 0} icon={<Heart className="text-pink-600" />} />
         <KPICard title="Comments" value={summary?.totalComments || 0} icon={<MessageCircle className="text-blue-600" />} />
         <KPICard title="Shares" value={summary?.totalShares || 0} icon={<Share2 className="text-emerald-600" />} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard title="Saves" value={summary?.totalSaves || 0} icon={<Bookmark className="text-purple-600" />} />
+        <KPICard title="Clicks" value={summary?.totalClicks || 0} icon={<MousePointer2 className="text-cyan-600" />} />
         <KPICard title="Reach" value={summary?.totalReach || 0} icon={<Users className="text-amber-600" />} />
+        <KPICard title="Avg Engagement" value={`${((summary?.avgEngagementRate || 0) * 100).toFixed(2)}%`} icon={<Zap className="text-yellow-500" />} />
       </div>
 
       {/* Posts List */}
@@ -321,13 +337,40 @@ function PostCard({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-6">
-            <Metric icon={<Heart className="w-4 h-4 text-pink-500" />} label="Likes" value={analytics.likesCount || 0} />
-            <Metric icon={<MessageCircle className="w-4 h-4 text-blue-500" />} label="Comments" value={analytics.commentsCount || 0} />
-            {post.platform === 'facebook' && (
-              <Metric icon={<Share2 className="w-4 h-4 text-emerald-500" />} label="Shares" value={analytics.sharesCount || 0} />
+          <div className="border-t border-slate-100 pt-4 mt-2">
+            {post.isQuickSocialOrigin ? (
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-y-4 gap-x-2">
+                <Metric icon={<Heart className="w-3.5 h-3.5 text-pink-500" />} label="Likes" value={analytics.likesCount || 0} />
+                <Metric icon={<MessageCircle className="w-3.5 h-3.5 text-blue-500" />} label="Comments" value={analytics.commentsCount || 0} />
+                <Metric icon={<Share2 className="w-3.5 h-3.5 text-emerald-500" />} label="Shares" value={analytics.sharesCount || 0} />
+                <Metric icon={<Bookmark className="w-3.5 h-3.5 text-purple-500" />} label="Saves" value={analytics.savesCount || 0} />
+                <Metric icon={<Eye className="w-3.5 h-3.5 text-slate-500" />} label="Reach" value={analytics.reach || 0} />
+                <Metric icon={<BarChart3 className="w-3.5 h-3.5 text-indigo-500" />} label="Impr." value={analytics.impressions || 0} />
+                <Metric icon={<Play className="w-3.5 h-3.5 text-orange-500" />} label="Views" value={analytics.videoViews || 0} />
+                <Metric icon={<MousePointer2 className="w-3.5 h-3.5 text-cyan-500" />} label="Clicks" value={analytics.clicksCount || 0} />
+                
+                <div className="col-span-2 md:col-span-1 pt-2 md:pt-0">
+                  <div className="bg-amber-50 px-2 py-1 rounded border border-amber-100">
+                    <span className="text-[10px] font-bold text-amber-700 block uppercase">ER Score</span>
+                    <span className="text-sm font-bold text-amber-900">{(analytics.engagementScore || 0).toFixed(3)}</span>
+                  </div>
+                </div>
+
+                {analytics.negativeActionsCount > 0 && (
+                  <div className="col-span-2 md:col-span-1 pt-2 md:pt-0">
+                    <div className="bg-red-50 px-2 py-1 rounded border border-red-100">
+                      <span className="text-[10px] font-bold text-red-700 block uppercase">Negative</span>
+                      <span className="text-sm font-bold text-red-900">{analytics.negativeActionsCount}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+                <AlertCircle className="w-4 h-4 text-slate-400" />
+                <span className="text-xs font-medium text-slate-500 italic">Native Post: Analytics only available for posts published via QuickSocial.</span>
+              </div>
             )}
-            <Metric icon={<Eye className="w-4 h-4 text-slate-500" />} label="Reach" value={analytics.reach || 0} />
           </div>
         </div>
       </div>

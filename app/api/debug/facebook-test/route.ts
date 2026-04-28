@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { connectedAccounts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { ConnectedAccount } from "@/lib/db/models";
 import { getPlatformClient } from "@/lib/platforms/factory";
 
 export async function GET(req: NextRequest) {
@@ -10,9 +9,11 @@ export async function GET(req: NextRequest) {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const account = await db.query.connectedAccounts.findFirst({
-      where: eq(connectedAccounts.platform, "facebook"),
-    });
+    await connectMongo();
+
+    const account = await (ConnectedAccount as any).findOne({
+      platform: "facebook",
+    }).lean();
 
     if (!account) return NextResponse.json({ error: "No Facebook account connected" }, { status: 404 });
 

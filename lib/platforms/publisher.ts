@@ -1,36 +1,33 @@
-import { db } from "@/lib/db";
-import { posts, postTargets, connectedAccounts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { Post, PostTarget, ConnectedAccount } from "@/lib/db/models";
 import { getPlatformClient } from "@/lib/platforms/factory";
 
 export async function executePublishing(postId: string) {
   console.log("Starting publishing for postId:", postId);
-  const post = await db.query.posts.findFirst({
-    where: eq(posts.id, postId),
-  });
+  
+  await connectMongo();
+  
+  const post = await (Post as any).findById(postId).lean();
 
   if (!post) {
     console.error("Post not found:", postId);
     return { success: false, error: "Post not found" };
   }
 
-  const targets = await db.query.postTargets.findMany({
-    where: eq(postTargets.postId, postId),
-  });
+  const targets = await (PostTarget as any).find({ postId }).lean();
 
   console.log("Found targets:", targets.length);
 
   let overallSuccess = true;
 
   for (const target of targets) {
-    const account = await db.query.connectedAccounts.findFirst({
-      where: eq(connectedAccounts.id, target.accountId),
-    });
+    const account = await (ConnectedAccount as any).findById(target.accountId).lean();
 
     if (!account) {
-      await db.update(postTargets)
-        .set({ status: "failed", error: "Account not found" })
-        .where(eq(postTargets.id, target.id));
+      await (PostTarget as any).updateOne(
+        { _id: target._id },
+        { $set: { status: "failed", error: "Account not found" } }
+      );
       overallSuccess = false;
       continue;
     }
@@ -49,13 +46,16 @@ export async function executePublishing(postId: string) {
             accessToken = refreshed.accessToken;
             
             // Update the account in the DB
-            await db.update(connectedAccounts)
-              .set({
-                accessToken: refreshed.accessToken,
-                refreshToken: refreshed.refreshToken || account.refreshToken,
-                expiresAt: refreshed.expiresAt,
-              })
-              .where(eq(connectedAccounts.id, account.id));
+            await (ConnectedAccount as any).updateOne(
+              { _id: account._id },
+              {
+                $set: {
+                  accessToken: refreshed.accessToken,
+                  refreshToken: refreshed.refreshToken || account.refreshToken,
+                  expiresAt: refreshed.expiresAt,
+                }
+              }
+            );
               
             console.log(`Token for ${account.platform} refreshed successfully.`);
           } catch (refreshError: any) {
@@ -75,26 +75,31 @@ export async function executePublishing(postId: string) {
       );
 
       if (result.success) {
-        await db.update(postTargets)
-          .set({ status: "published" })
-          .where(eq(postTargets.id, target.id));
+        console.log(`[Publish Debug] Saving platformPostId ${result.platformPostId} for target ${target._id}`);
+        await (PostTarget as any).updateOne(
+          { _id: target._id },
+          { $set: { status: "published", platformPostId: result.platformPostId } }
+        );
       } else {
-        await db.update(postTargets)
-          .set({ status: "failed", error: result.error })
-          .where(eq(postTargets.id, target.id));
+        await (PostTarget as any).updateOne(
+          { _id: target._id },
+          { $set: { status: "failed", error: result.error } }
+        );
         overallSuccess = false;
       }
     } catch (error: any) {
-      await db.update(postTargets)
-        .set({ status: "failed", error: error.message })
-        .where(eq(postTargets.id, target.id));
+      await (PostTarget as any).updateOne(
+        { _id: target._id },
+        { $set: { status: "failed", error: error.message } }
+      );
       overallSuccess = false;
     }
   }
 
-  await db.update(posts)
-    .set({ status: overallSuccess ? "published" : "failed" })
-    .where(eq(posts.id, postId));
+  await (Post as any).updateOne(
+    { _id: postId },
+    { $set: { status: overallSuccess ? "published" : "failed" } }
+  );
 
   return { success: overallSuccess };
 }

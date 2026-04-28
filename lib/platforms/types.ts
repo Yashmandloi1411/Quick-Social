@@ -25,5 +25,5 @@ export interface PlatformClient {
   getComments(tokens: { accessToken: string }, accountId: string): Promise<any>;
   replyToComment(tokens: { accessToken: string }, commentId: string, text: string, accountId?: string): Promise<any>;
   getAllPosts?(tokens: { accessToken: string }, accountId: string): Promise<any[]>;
-  getPostMetrics?(tokens: { accessToken: string }, postId: string): Promise<any>;
+  getPostMetrics?(tokens: { accessToken: string }, postId: string, mediaType?: string): Promise<any>;
 }

@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { inngest } from "@/lib/inngest/client";
-import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User } from "@/lib/db/models";
 
 export async function POST(req: NextRequest) {
   try {
     const { userId: clerkId } = await auth();
     if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-    const user = await db.query.users.findFirst({ where: eq(users.clerkId, clerkId) });
+    await connectMongo();
+
+    const user = await (User as any).findOne({ clerkId });
     if (!user) return new NextResponse("User not found", { status: 404 });
 
     const body = await req.json().catch(() => ({}));

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { autoReplyRules, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, AutoReplyRule } from "@/lib/db/models";
+import { v4 as uuidv4 } from "uuid";
 
 // GET — list all rules for the current user
 export async function GET() {
@@ -10,21 +10,45 @@ export async function GET() {
     const { userId: clerkId } = await auth();
     if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-    const user = await db.query.users.findFirst({ where: eq(users.clerkId, clerkId) });
+    await connectMongo();
+
+    const user = await User.findOne({ clerkId });
     if (!user) return new NextResponse("User not found", { status: 404 });
 
-    const rules = await db.query.autoReplyRules.findMany({
-      where: eq(autoReplyRules.userId, user.id),
-      with: {
-        account: true,
-        logs: {
-          orderBy: (logs, { desc }) => [desc(logs.appliedAt)],
-          limit: 20,
-        },
+    const rules = await AutoReplyRule.aggregate([
+      { $match: { userId: user._id } },
+      {
+        $lookup: {
+          from: "connectedaccounts",
+          localField: "accountId",
+          foreignField: "_id",
+          as: "account"
+        }
       },
-    });
+      { $unwind: "$account" },
+      {
+        $lookup: {
+          from: "autoreplylogs",
+          localField: "_id",
+          foreignField: "ruleId",
+          pipeline: [
+            { $sort: { appliedAt: -1 } },
+            { $limit: 20 }
+          ],
+          as: "logs"
+        }
+      }
+    ]);
 
-    return NextResponse.json(rules);
+    // Map `_id` back to `id` for frontend consistency
+    const formattedRules = rules.map((r: any) => ({
+      ...r,
+      id: r._id,
+      account: { ...r.account, id: r.account._id },
+      logs: r.logs.map((l: any) => ({ ...l, id: l._id }))
+    }));
+
+    return NextResponse.json(formattedRules);
   } catch (error: any) {
     console.error("Auto-reply GET error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -37,22 +61,10 @@ export async function POST(req: NextRequest) {
     const { userId: clerkId } = await auth();
     if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-    const user = await db.query.users.findFirst({ where: eq(users.clerkId, clerkId) });
+    await connectMongo();
+
+    const user = await User.findOne({ clerkId });
     if (!user) return new NextResponse("User not found", { status: 404 });
-
-    // Plan limit: Free = 1 rule
-    const existingRules = await db.query.autoReplyRules.findMany({
-      where: eq(autoReplyRules.userId, user.id),
-    });
-
-    /* 
-    if (user.plan === "free" && existingRules.length >= 1) {
-      return NextResponse.json(
-        { error: "Free plan is limited to 1 auto-reply rule. Upgrade to Pro for more." },
-        { status: 403 }
-      );
-    }
-    */
 
     const body = await req.json();
     const { accountId, triggerType, triggerKeywords, useAi, aiPrompt, replyTemplate } = body;
@@ -61,21 +73,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const [newRule] = await db
-      .insert(autoReplyRules)
-      .values({
-        userId: user.id,
-        accountId,
-        triggerType,
-        triggerKeywords: triggerKeywords || null,
-        useAi: useAi ?? false,
-        aiPrompt: aiPrompt || null,
-        replyTemplate: replyTemplate || null,
-        isActive: true,
-      })
-      .returning();
+    const newRule = await AutoReplyRule.create({
+      _id: uuidv4(),
+      userId: user._id,
+      accountId,
+      triggerType,
+      triggerKeywords: triggerKeywords || null,
+      useAi: useAi ?? false,
+      aiPrompt: aiPrompt || null,
+      replyTemplate: replyTemplate || null,
+      isActive: true,
+    });
 
-    return NextResponse.json(newRule, { status: 201 });
+    return NextResponse.json({ ...newRule.toObject(), id: newRule._id }, { status: 201 });
   } catch (error: any) {
     console.error("Auto-reply POST error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

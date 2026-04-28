@@ -1,9 +1,9 @@
 import { Webhook } from 'svix'
 import { headers } from 'next/headers'
 import { WebhookEvent } from '@clerk/nextjs/server'
-import { db } from '@/lib/db'
-import { users } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { connectMongo } from '@/lib/db/mongo'
+import { User } from '@/lib/db/models'
+import { v4 as uuidv4 } from 'uuid'
 
 export async function POST(req: Request) {
   const SIGNING_SECRET = process.env.SVIX_SECRET
@@ -45,10 +45,13 @@ export async function POST(req: Request) {
 
   const eventType = evt.type
 
+  await connectMongo()
+
   if (eventType === 'user.created') {
     const { id, email_addresses, first_name, last_name } = evt.data
 
-    await db.insert(users).values({
+    await User.create({
+      _id: uuidv4(),
       clerkId: id,
       email: email_addresses[0].email_address,
       firstName: first_name,
@@ -57,15 +60,18 @@ export async function POST(req: Request) {
   } else if (eventType === 'user.updated') {
     const { id, email_addresses, first_name, last_name } = evt.data
 
-    await db.update(users).set({
-      email: email_addresses[0].email_address,
-      firstName: first_name,
-      lastName: last_name,
-    }).where(eq(users.clerkId, id))
+    await User.updateOne(
+      { clerkId: id },
+      {
+        email: email_addresses[0].email_address,
+        firstName: first_name,
+        lastName: last_name,
+      }
+    )
   } else if (eventType === 'user.deleted') {
     const { id } = evt.data
     if (id) {
-       await db.delete(users).where(eq(users.clerkId, id))
+       await User.deleteOne({ clerkId: id })
     }
   }
 

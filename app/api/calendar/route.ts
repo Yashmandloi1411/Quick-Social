@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { posts, users } from "@/lib/db/schema";
-import { and, eq, gte, lte } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, Post } from "@/lib/db/models";
 import { startOfMonth, endOfMonth, parseISO } from "date-fns";
 
 export async function GET(req: NextRequest) {
@@ -12,9 +11,9 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.clerkId, clerkId),
-    });
+    await connectMongo();
+
+    const user = await (User as any).findOne({ clerkId });
 
     if (!user) {
       return new NextResponse("User not found", { status: 404 });
@@ -34,22 +33,74 @@ export async function GET(req: NextRequest) {
       endDate = endOfMonth(now);
     }
 
-    const calendarPosts = await db.query.posts.findMany({
-      where: and(
-        eq(posts.userId, user.id),
-        gte(posts.scheduledFor, startDate),
-        lte(posts.scheduledFor, endDate)
-      ),
-      with: {
-        targets: {
-          with: {
-            account: true,
-          },
-        },
+    const calendarPosts = await (Post as any).aggregate([
+      {
+        $match: {
+          userId: user._id,
+          scheduledFor: { $gte: startDate, $lte: endDate }
+        }
       },
-    });
+      {
+        $lookup: {
+          from: "posttargets",
+          localField: "_id",
+          foreignField: "postId",
+          as: "targets"
+        }
+      },
+      {
+        $unwind: { path: "$targets", preserveNullAndEmptyArrays: true }
+      },
+      {
+        $lookup: {
+          from: "connectedaccounts",
+          localField: "targets.accountId",
+          foreignField: "_id",
+          as: "targets.account"
+        }
+      },
+      {
+        $unwind: { path: "$targets.account", preserveNullAndEmptyArrays: true }
+      },
+      {
+        $group: {
+          _id: "$_id",
+          post: { $first: "$$ROOT" },
+          targets: { $push: "$targets" }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          userId: "$post.userId",
+          content: "$post.content",
+          status: "$post.status",
+          scheduledFor: "$post.scheduledFor",
+          mediaUrls: "$post.mediaUrls",
+          createdAt: "$post.createdAt",
+          targets: {
+            $filter: {
+              input: "$targets",
+              as: "t",
+              cond: { $ne: ["$$t._id", null] }
+            }
+          }
+        }
+      }
+    ]);
 
-    return NextResponse.json(calendarPosts);
+    // Format result to include 'id' instead of '_id' for compatibility
+    const formattedPosts = calendarPosts.map((p: any) => ({
+      ...p,
+      id: p._id,
+      targets: p.targets.map((t: any) => ({
+        ...t,
+        id: t._id,
+        account: t.account ? { ...t.account, id: t.account._id } : null
+      }))
+    }));
+
+    return NextResponse.json(formattedPosts);
   } catch (error: any) {
     console.error("Calendar API Error:", error);
     return new NextResponse("Internal Server Error", { status: 500 });

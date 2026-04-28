@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { posts, users } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, Post } from "@/lib/db/models";
 import { inngest } from "@/lib/inngest/client";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { userId: clerkId } = await auth();
@@ -15,15 +14,15 @@ export async function PATCH(
       return new NextResponse("Unauthorized", { status: 401 });
     }
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.clerkId, clerkId),
-    });
+    await connectMongo();
+
+    const user = await (User as any).findOne({ clerkId });
 
     if (!user) {
       return new NextResponse("User not found", { status: 404 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     const body = await req.json();
     const { scheduledFor } = body;
 
@@ -32,14 +31,16 @@ export async function PATCH(
     }
 
     // Update the post in the database
-    const [updatedPost] = await db
-      .update(posts)
-      .set({
-        scheduledFor: new Date(scheduledFor),
-        status: "scheduled",
-      })
-      .where(and(eq(posts.id, id), eq(posts.userId, user.id)))
-      .returning();
+    const updatedPost = await (Post as any).findOneAndUpdate(
+      { _id: id, userId: user._id },
+      {
+        $set: {
+          scheduledFor: new Date(scheduledFor),
+          status: "scheduled",
+        }
+      },
+      { new: true }
+    ).lean();
 
     if (!updatedPost) {
       return new NextResponse("Post not found or unauthorized", { status: 404 });
@@ -49,11 +50,11 @@ export async function PATCH(
     // The old job will check the DB timestamp and exit if it doesn't match
     await inngest.send({
       name: "post/publish",
-      data: { postId: updatedPost.id },
+      data: { postId: updatedPost._id },
       ts: new Date(scheduledFor).getTime(),
     });
 
-    return NextResponse.json(updatedPost);
+    return NextResponse.json({ ...updatedPost, id: updatedPost._id });
   } catch (error: any) {
     console.error("Reschedule API Error:", error);
     return new NextResponse("Internal Server Error", { status: 500 });

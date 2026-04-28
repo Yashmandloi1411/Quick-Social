@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { platformPosts, connectedAccounts, users, postAnalytics } from "@/lib/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, ConnectedAccount, PlatformPost } from "@/lib/db/models";
 
 export async function GET(req: NextRequest) {
   try {
     const { userId: clerkId } = await auth();
     if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-    const user = await db.query.users.findFirst({ where: eq(users.clerkId, clerkId) });
+    await connectMongo();
+
+    const user = await User.findOne({ clerkId });
     if (!user) return new NextResponse("User not found", { status: 404 });
 
     const searchParams = req.nextUrl.searchParams;
@@ -17,32 +18,26 @@ export async function GET(req: NextRequest) {
     const platform = searchParams.get("platform");
 
     // 1. Get user's connected accounts
-    const userAccounts = await db.query.connectedAccounts.findMany({
-      where: eq(connectedAccounts.userId, user.id),
-    });
-    const accountIds = userAccounts.map(a => a.id);
+    const userAccounts = await ConnectedAccount.find({ userId: user._id });
+    const accountIds = userAccounts.map(a => a._id);
 
     if (accountIds.length === 0) return NextResponse.json([]);
 
     // 2. Build filter
-    let filters = [inArray(platformPosts.accountId, accountIds)];
-    if (accountId) filters.push(eq(platformPosts.accountId, accountId));
-    if (platform) filters.push(eq(platformPosts.platform, platform));
+    let filter: any = { accountId: { $in: accountIds } };
+    if (accountId) filter.accountId = accountId;
+    if (platform) filter.platform = platform;
 
-    // 3. Fetch posts with analytics using standard joins to avoid Drizzle lateral join bugs
-    const results = await db.select({
-      post: platformPosts,
-      analytics: postAnalytics
-    })
-    .from(platformPosts)
-    .leftJoin(postAnalytics, eq(platformPosts.platformPostId, postAnalytics.platformPostId))
-    .where(and(...filters))
-    .orderBy(desc(platformPosts.publishedAt))
-    .limit(50);
+    // 3. Fetch posts with analytics
+    const results = await PlatformPost.find(filter)
+      .sort({ publishedAt: -1 })
+      .limit(50)
+      .lean();
 
     // Format the response to match what the frontend expects
-    const posts = results.map(row => ({
-      ...row.post,
+    const posts = results.map((row: any) => ({
+      ...row,
+      id: row._id,
       analytics: row.analytics ? [row.analytics] : []
     }));
 

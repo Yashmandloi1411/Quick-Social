@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
-import { connectedAccounts, users, postTargets, autoReplyRules, autoReplyLogs } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { connectMongo } from "@/lib/db/mongo";
+import { User, ConnectedAccount, PostTarget, AutoReplyRule, AutoReplyLog } from "@/lib/db/models";
 
 export async function DELETE(
   req: NextRequest,
@@ -13,36 +12,27 @@ export async function DELETE(
   console.log("Disconnect: Request for accountId:", accountId, "from clerkId:", clerkId);
   if (!clerkId) return new NextResponse("Unauthorized", { status: 401 });
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.clerkId, clerkId),
-  });
+  await connectMongo();
+
+  const user = await User.findOne({ clerkId });
 
   if (!user) return new NextResponse("User not found", { status: 404 });
 
   try {
     // 1. Delete auto-reply logs for rules belonging to this account
-    const rules = await db.query.autoReplyRules.findMany({
-      where: eq(autoReplyRules.accountId, accountId),
-    });
-    const ruleIds = rules.map(r => r.id);
+    const rules = await AutoReplyRule.find({ accountId });
+    const ruleIds = rules.map(r => r._id);
     
     if (ruleIds.length > 0) {
-      for (const ruleId of ruleIds) {
-        await db.delete(autoReplyLogs).where(eq(autoReplyLogs.ruleId, ruleId));
-      }
-      await db.delete(autoReplyRules).where(eq(autoReplyRules.accountId, accountId));
+      await AutoReplyLog.deleteMany({ ruleId: { $in: ruleIds } });
+      await AutoReplyRule.deleteMany({ accountId });
     }
 
     // 2. Delete post targets
-    await db.delete(postTargets).where(eq(postTargets.accountId, accountId));
+    await PostTarget.deleteMany({ accountId });
 
     // 3. Delete the account itself
-    await db.delete(connectedAccounts).where(
-      and(
-        eq(connectedAccounts.id, accountId),
-        eq(connectedAccounts.userId, user.id)
-      )
-    );
+    await ConnectedAccount.deleteOne({ _id: accountId, userId: user._id });
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
@@ -53,4 +43,3 @@ export async function DELETE(
     }, { status: 500 });
   }
 }
-
